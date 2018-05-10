@@ -13,6 +13,7 @@
 
 //#define MAXFILTLEN 10
 #define MAXVTLEN 5 // enough to accomodate `INDEL'.
+#define MAXIDLEN 100
 
 #define WINLEN 100000 // length of the window, in bases.
 
@@ -32,8 +33,7 @@ typedef struct vcf_allele {
 // This complicates a bit the structure. Should we use a linked list? I doubt
 // it. Maybe some codes. In our vcf, however, all records are "PASS".
 typedef struct vcf_filter {
-	char *filter; // allocate space with malloc
-	struct vcf_filter * next;
+	bool pass;
 } VCF_FILTER;
 
 typedef struct vcf_info {
@@ -43,8 +43,8 @@ typedef struct vcf_info {
 } VCF_INFO;
 
 typedef struct vcf_format_gt {
-	int m_allele; // maternal allele
-	int p_allele; // paternal allele
+	int m; // maternal allele
+	int p; // paternal allele
 } VCF_FORMAT_GT;
 
 /* XXX The user shoud build this structure with as many fields as the format
@@ -61,10 +61,10 @@ typedef struct vcf_sample {
 typedef struct vcf_locus {
 	int chrom; // what about X and Y? -1 and -2? 23 and 24? enum??
 	unsigned long pos;
-	char *id; // the complete ID field. allocate space with malloc.
+	char id[MAXIDLEN]; // the complete ID field.
 	VCF_ALLELE *alleles; // the first allele in this linked list is the ref.
 	int qual;
-	VCF_FILTER *filter;
+	VCF_FILTER filter;
 	VCF_INFO info;
 	VCF_SAMPLE *samples;
 	struct vcf_locus *next;
