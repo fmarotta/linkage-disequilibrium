@@ -11,12 +11,14 @@
 #include "type_utils.h"
 
 #define SEQLEN 150 // max length of allele seq
+#define GTLEN 3 // max length of genotype
 #define FILTLEN 50 // in our case we can only have PASS
 #define INFOLEN 200
 
 static VCF_LOCUS buflocus;
 
-/* digest_line() returns 0 on success, -1 at EOF, 1 if failure */
+/* digest_line() returns 0 on success, -1 at EOF, 1 if memory failure,
+ * and 2 when the line is malformed. */
 static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file);
 static void vomit_line(const VCF_LOCUS *plocus);
 static bool locus_is_in_window(const VCF_LOCUS *plocus, const VCF_WINDOW *pwindow);
@@ -25,6 +27,7 @@ static bool locus_is_valid(const VCF_LOCUS *plocus);
 static void free_alleles(VCF_ALLELE **palleles);
 static void free_samples(VCF_SAMPLE **psamples);
 static VCF_ALLELE *make_allele(const char *seq, int alnum);
+static VCF_SAMPLE *make_sample(int m, int p, bool phased);
 
 static void foreach_subfield(void (*fn)(char *subfield, VCF_LOCUS *plocus), const char *field, char sep, VCF_LOCUS *plocus);
 static void parse_info(char *subfield, VCF_LOCUS *plocus);
@@ -32,6 +35,7 @@ static void parse_ac(char *subfield, VCF_LOCUS *plocus);
 static void parse_af(char *subfield, VCF_LOCUS *plocus);
 static void parse_vt(char *subfield, VCF_LOCUS *plocus);
 static void parse_alt_seq(char *subfield, VCF_LOCUS *plocus);
+static void parse_gt(char *subfield, VCF_LOCUS *plocus);
 
 /* We want to read a line from the file and decide whether it should be
  * added to the window according to the position of the locus and
@@ -93,18 +97,18 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 			}
 
 		// Read the next line into the buffer
-		//
-		// FIXME we could be run out of file as well... Maybe this
-		// function should return a buffer struct. At the end of each
-		// iteration of the while below, we try to digest and inside the
-		// body we check if the eof member is set to true and decide
-		// whether to break the loop. OR, we check if we have run out of
-		// file during the fgets...
 		if ((status = digest_line(&buflocus, vcf_file)) != 0)
 		{
-			// if buf.eof == true then break;
-			fputs("ERROR: we ran out of memory.", stderr);
-			exit(EXIT_FAILURE);
+			if (status == -1)
+			{
+				fputs("ERROR: no data found in the vcf file.", stderr);
+				exit(EXIT_FAILURE);
+			}
+			else
+			{
+				fputs("ERROR: we ran out of memory.", stderr);
+				exit(EXIT_FAILURE);
+			}
 		}
 	}
 }
@@ -138,11 +142,12 @@ bool Enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow)
 
 static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 {
-	VCF_ALLELE *newallele, *last;
+	VCF_ALLELE *newallele, *lastallele;
+	VCF_SAMPLE *newsample, *lastsample;
 
 	char tmp_ref_seq[SEQLEN], tmp_alt_seq[SEQLEN];
 	char tmp_filter[FILTLEN], tmp_info[INFOLEN];
-	char *pfield;
+	char tmp_gt[GTLEN];
 
 	// XXX what about chr X and Y? are they integer?
 	fscanf(vcf_file, "%d%ld%s%s%s%d%s%s", &plocus->chrom, &plocus->pos,
@@ -173,30 +178,49 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 
 	// ref info
 	VCF_ALLELE *ref;
-	last = plocus->alleles->next; // start from the first alt allele
+	lastallele = plocus->alleles->next; // start from the first alt allele
 	ref = plocus->alleles;
 	ref->allele_info.ac = plocus->info.an;
 	ref->allele_info.af = 1;
 	strcpy(plocus->alleles->allele_info.vt, "REF");
-	while (last != NULL)
+	while (lastallele != NULL)
 	{
-		ref->allele_info.ac -= last->allele_info.ac;
-		ref->allele_info.af -= last->allele_info.af;
-		last = last->next;
+		ref->allele_info.ac -= lastallele->allele_info.ac;
+		ref->allele_info.af -= lastallele->allele_info.af;
+		lastallele = lastallele->next;
 	}
 
-	// Allocate space for the samples
-	//newsample = make_sample();
+	// skip one field (the format)
+	fscanf(vcf_file, "%s", tmp_gt);
+
+	// Read in the first sample
+	fscanf(vcf_file, "%s", tmp_gt);
+	newsample = make_sample(tmp_gt[0]-48, tmp_gt[2]-48, (tmp_gt[1] == '|'));
+	if (newsample == NULL)
+		return 1;
+	plocus->samples = newsample;
+	lastsample = plocus->samples;
+
+	// Read the other samples
+	for (int i = 1; i < plocus->info.ns; i++)
+	{
+		// XXX we assume that no locus has more than 10 alleles...
+		fscanf(vcf_file, "%s", tmp_gt);
+		newsample = make_sample(tmp_gt[0]-48, tmp_gt[2]-48, (tmp_gt[1] == '|'));
+		if (newsample == NULL)
+			return 1;
+		lastsample->next = newsample;
+		lastsample = lastsample->next;
+	}
 
 	EATLINE(vcf_file);
 	vomit_line(plocus);
 
-// after getting samples...
+	// after getting samples...
 	if (feof(vcf_file))
 		return -1;
 	
 	return 0;
-
 }
 
 static void foreach_subfield(void (*fn)(char *subfield, VCF_LOCUS *plocus), const char *field, char sep, VCF_LOCUS *plocus)
@@ -340,18 +364,46 @@ static VCF_ALLELE *make_allele(const char *seq, int alnum)
 	return newallele;
 }
 
+static VCF_SAMPLE *make_sample(int m, int p, bool phased)
+{
+	VCF_SAMPLE *newsample;
+
+	newsample = (VCF_SAMPLE *) malloc(sizeof(VCF_SAMPLE));
+	if (newsample != NULL)
+	{
+		newsample->gt.m = m;
+		newsample->gt.p = p;
+		newsample->phased = phased;
+		newsample->next = NULL;
+	}
+
+	return newsample;
+}
+
 static void vomit_line(const VCF_LOCUS *plocus)
 {
 	VCF_ALLELE *pallele = plocus->alleles;
+	VCF_SAMPLE *psample = plocus->samples;
 
-	printf("%d\t%ld\t%s\t%d\t%d\t%d\n", plocus->chrom, plocus->pos, plocus->id,
+	printf("LOCUS\n");
+	printf("chrom %d\tpos %ld\tid %s\tn_samples %d\tn_haplotypes %d\tn_alleles %d\n",
+			plocus->chrom, plocus->pos, plocus->id,
 			plocus->info.ns, plocus->info.an, plocus->info._an);
+	printf("ALLELES\n");
 	while (pallele != NULL)
 	{
-		printf("allele %d: %s\t%d\t%f\t%s\n", pallele->allele_num, pallele->allele_seq,
+		printf("allele %d: seq %s\tcount %d\tfreq %f\ttype %s\n",
+				pallele->allele_num, pallele->allele_seq,
 				pallele->allele_info.ac, pallele->allele_info.af, pallele->allele_info.vt);
 		pallele = pallele->next;
 	}
+	printf("SAMPLES\n");
+	while (psample != NULL)
+	{
+		printf("%d%c%d\t", psample->gt.m, psample->phased ? '|' : '/', psample->gt.p);
+		psample = psample->next;
+	}
+	putchar('\n');
 	putchar('\n');
 }
 
