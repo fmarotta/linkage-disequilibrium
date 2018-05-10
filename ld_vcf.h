@@ -91,6 +91,11 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen);
  * 					adds more locus from the file to the queue. */
 void Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow);
 
+/* operation:		removes all the loci from the window.
+ * precondition:	pwindow is initialized.
+ * postcondition:	all memory is freed. */
+void Close_window(VCF_WINDOW *pwindow);
+
 /* operation:		adds one locus to the window; do not bother using it,
  * 					please: use Initialize_window() and Slide_window().
  * precondition:	a locus must have been read and digested.
