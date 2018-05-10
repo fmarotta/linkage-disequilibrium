@@ -3,6 +3,10 @@
  * Calculate linkage disequilibrium from a VCF file.
  */
 
+// TODO: internally, use a single linked list to host all alleles, be them ref
+// or alt. To the user, provide functions to access either the ref or all the
+// alts.
+
 #ifndef _LD_VCF_H_
 #define _LD_VCF_H_
 #include <stdbool.h>
@@ -10,7 +14,7 @@
 //#define MAXFILTLEN 10
 #define MAXVTLEN 5 // enough to accomodate `INDEL'.
 
-#define WINLEN 10000 // length of the window, in bases.
+#define WINLEN 100000 // length of the window, in bases.
 
 typedef struct vcf_allele_info {
 	int ac; // number of ref/alt alleles in called genotypes
@@ -21,22 +25,16 @@ typedef struct vcf_allele_info {
 typedef struct vcf_allele {
 	char *allele_seq; // allocate space with malloc
 	int allele_num; // number assigned to the allele (found in the genotype field)
-	VCF_ALLELE_INFO info;
+	VCF_ALLELE_INFO allele_info;
 	struct vcf_allele *next;
 } VCF_ALLELE;
 
-/* Do we really need the filter? I think we can use it on the fly to decide
- * whether to consider or not the locus, e.g. we provide a function that
- * returns something according to the filter, and the user can decide if she
- * wants to rid that row or to keep it. We should not store this value, but do
- * things according to it when processing the vcf.
- */
-/*
+// This complicates a bit the structure. Should we use a linked list? I doubt
+// it. Maybe some codes. In our vcf, however, all records are "PASS".
 typedef struct vcf_filter {
-	char filter[MAXFILTLEN];
+	char *filter; // allocate space with malloc
 	struct vcf_filter * next;
 } VCF_FILTER;
-*/
 
 typedef struct vcf_info {
 	int ns; // total number of samples with data
@@ -62,26 +60,30 @@ typedef struct vcf_sample {
 
 typedef struct vcf_locus {
 	int chrom; // what about X and Y? -1 and -2? 23 and 24? enum??
-	unsigned long int pos;
+	unsigned long pos;
 	char *id; // the complete ID field. allocate space with malloc.
 	VCF_ALLELE *alleles; // the first allele in this linked list is the ref.
 	int qual;
+	VCF_FILTER *filter;
 	VCF_INFO info;
 	VCF_SAMPLE *samples;
 	struct vcf_locus *next;
 } VCF_LOCUS;
 
 typedef struct vcf_window {
-	struct VCF_LOCUS *head;
-	struct VCF_LOCUS *tail;
+	VCF_LOCUS *head;
+	VCF_LOCUS *tail;
 	int nloci; // number of loci currently in the queue
+	int winlen; // length of the sliding window
 } VCF_WINDOW;
+
 
 /* operation:		reads from the vcf file all the loci that fall within
  * 					<winlen> bases from the first locus.
- * precondition:	vcf_file is fopen'd, a pointer to window is defined.
+ * precondition:	vcf_file is fopen'd, a pointer to window is defined;
+ * 					winlen is the length of the window.
  * postcondition:	adds the first loci to the queue and initializes it. */
-void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow);
+void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen);
 
 /* operation:		moves the window forward one locus.
  * precondition:	pwindow is initialized.
