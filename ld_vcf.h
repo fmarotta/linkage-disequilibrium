@@ -14,19 +14,16 @@
 //#define MAXFILTLEN 10
 #define MAXVTLEN 5 // enough to accomodate `INDEL'.
 #define MAXIDLEN 100
+#define SEQLEN 150 // max length of allele seq
 
 #define WINLEN 100000 // length of the window, in bases.
 
-typedef struct vcf_allele_info {
+typedef struct vcf_allele {
+	char allele_seq[SEQLEN]; // allocate space with malloc
+	int allele_num; // number assigned to the allele (found in the genotype field)
 	int ac; // number of ref/alt alleles in called genotypes
 	float af; // ref/alt allele frequency in the range (0,1)
 	char vt[MAXVTLEN]; // what type of variant the line represents; for ref alleles this is always `REF'.
-} VCF_ALLELE_INFO;
-
-typedef struct vcf_allele {
-	char *allele_seq; // allocate space with malloc
-	int allele_num; // number assigned to the allele (found in the genotype field)
-	VCF_ALLELE_INFO allele_info;
 	struct vcf_allele *next;
 } VCF_ALLELE;
 
@@ -47,6 +44,7 @@ typedef struct vcf_format_gt {
 	int p; // paternal allele
 } VCF_FORMAT_GT;
 
+// whether this sample is phased or not (*)
 /* XXX The user shoud build this structure with as many fields as the format
  * field in the vcf, or she can limit to the relevant ones. Also, here we
  * consider diploid organisms, but this can be edited as well. We also add a
@@ -54,7 +52,7 @@ typedef struct vcf_format_gt {
  */
 typedef struct vcf_sample {
 	VCF_FORMAT_GT gt;
-	bool phased; // whether this sample is phased or not (*)
+	bool phased;
 	struct vcf_sample *next;
 } VCF_SAMPLE;
 
@@ -88,8 +86,9 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen);
 /* operation:		moves the window forward one locus.
  * precondition:	pwindow is initialized.
  * postcondition:	removes the first locus from the queue; if appropriate
- * 					adds more locus from the file to the queue. */
-void Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow);
+ * 					adds more locus from the file to the queue. returns true
+ * 					until the window is full. */
+bool Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow);
 
 /* operation:		removes all the loci from the window.
  * precondition:	pwindow is initialized.
@@ -100,7 +99,13 @@ void Close_window(VCF_WINDOW *pwindow);
  * 					please: use Initialize_window() and Slide_window().
  * precondition:	a locus must have been read and digested.
  * poscondition:	a new locus is added to the window. */
-bool Enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow);
+//bool Enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow);
+
+/* operation:		removes one locus from window; do not bother using it,
+ * 					please: use Initialize_window() and Slide_window().
+ * precondition:	
+ * poscondition:	the memory occupied by the deleted locus is freed */
+//bool Dequeue_locus(VCF_LOCUS *plocus, VCF_WINDOW *pwindow);
 
 /* operation:		gets number of loci currently in the window.
  * precondition:	pwindow points to an initialized window.
@@ -112,7 +117,7 @@ unsigned int Nloci_in_window(const VCF_WINDOW *pwindow);
  * precondition:	plocus points to a locus (vcf row) of an initialized
  * 					window.
  * postcondition:	returns the number of alleles at that locus. */
-unsigned int Nalleles_in_locus(const VCF_LOCUS *plocus);
+int Nalleles_in_locus(const VCF_LOCUS *plocus);
 
 /* operation:		finds all the alleles in a locus.
  * precondition:	plocus points to a locus (vcf row) of an initialized
@@ -134,6 +139,8 @@ char *Get_allele_id(int alnum, const VCF_LOCUS *plocus);
  * poscondition:	returns the frequency of the genotype. */
 //float Genotype_freq(const VCF_FORMAT_GT *gt, const VCF_WINDOW *pwindow);
 
+float Allele_freq(int alnum, const VCF_LOCUS *plocus);
+
 // XXX this would be a great occasion to write a variable-argument-number
 // function, if we knew how to calculate LD for more than two alleles!
 
@@ -144,5 +151,11 @@ char *Get_allele_id(int alnum, const VCF_LOCUS *plocus);
  * postcondition:	returns the frequency of such event. */
 float Linked_alleles_freq(int alnum1, const VCF_LOCUS *plocus1,
 						  int alnum2, const VCF_LOCUS *plocus2);
+
+float Calculate_D(float p_A, float p_B, float p_AB);
+
+float Calculate_D_lewontin(float p_A, float p_B, float p_AB);
+
+float Calculate_r_squared(float p_A, float p_B, float p_AB);
 
 #endif
