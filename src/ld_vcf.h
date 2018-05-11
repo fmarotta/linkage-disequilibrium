@@ -11,12 +11,13 @@
 #define _LD_VCF_H_
 #include <stdbool.h>
 
-//#define MAXFILTLEN 10
 #define MAXVTLEN 5 // enough to accomodate `INDEL'.
 #define MAXIDLEN 100
 #define SEQLEN 150 // max length of allele seq
+#define FILTLEN 50 // in our case we can only have PASS
+#define GTLEN 3 // max length of genotype
+#define INFOLEN 200
 
-#define WINLEN 100000 // length of the window, in bases.
 
 typedef struct vcf_allele {
 	char allele_seq[SEQLEN]; // allocate space with malloc
@@ -36,7 +37,7 @@ typedef struct vcf_filter {
 typedef struct vcf_info {
 	int ns; // total number of samples with data
 	int an; // total number of alleles in called genotypes
-	int _an; // number of different alleles (1 ref + N alt) (*)
+	unsigned int _an; // number of different alleles (1 ref + N alt) (*)
 } VCF_INFO;
 
 typedef struct vcf_format_gt {
@@ -44,7 +45,6 @@ typedef struct vcf_format_gt {
 	int p; // paternal allele
 } VCF_FORMAT_GT;
 
-// whether this sample is phased or not (*)
 /* XXX The user shoud build this structure with as many fields as the format
  * field in the vcf, or she can limit to the relevant ones. Also, here we
  * consider diploid organisms, but this can be edited as well. We also add a
@@ -52,7 +52,7 @@ typedef struct vcf_format_gt {
  */
 typedef struct vcf_sample {
 	VCF_FORMAT_GT gt;
-	bool phased;
+	bool phased; // whether this sample is phased or not (*)
 	struct vcf_sample *next;
 } VCF_SAMPLE;
 
@@ -73,6 +73,7 @@ typedef struct vcf_window {
 	VCF_LOCUS *tail;
 	int nloci; // number of loci currently in the queue
 	int winlen; // length of the sliding window
+	FILE *vcf_file; // file associated to the window
 } VCF_WINDOW;
 
 
@@ -81,14 +82,14 @@ typedef struct vcf_window {
  * precondition:	vcf_file is fopen'd, a pointer to window is defined;
  * 					winlen is the length of the window.
  * postcondition:	adds the first loci to the queue and initializes it. */
-void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen);
+void Initialize_window(VCF_WINDOW *pwindow, FILE *vcf_file, int winlen);
 
 /* operation:		moves the window forward one locus.
  * precondition:	pwindow is initialized.
  * postcondition:	removes the first locus from the queue; if appropriate
  * 					adds more locus from the file to the queue. returns true
  * 					until the window is full. */
-bool Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow);
+void Slide_window(VCF_WINDOW *pwindow);
 
 /* operation:		removes all the loci from the window.
  * precondition:	pwindow is initialized.
@@ -117,7 +118,7 @@ unsigned int Nloci_in_window(const VCF_WINDOW *pwindow);
  * precondition:	plocus points to a locus (vcf row) of an initialized
  * 					window.
  * postcondition:	returns the number of alleles at that locus. */
-int Nalleles_in_locus(const VCF_LOCUS *plocus);
+unsigned int Nalleles_in_locus(const VCF_LOCUS *plocus);
 
 /* operation:		finds all the alleles in a locus.
  * precondition:	plocus points to a locus (vcf row) of an initialized
@@ -132,13 +133,16 @@ int Nalleles_in_locus(const VCF_LOCUS *plocus);
  * 					and the allele number. For triallelic loci, the ref
  * 					allele has both rs ids, the alt alleles have each the
  * 					appropriate one. */
-char *Get_allele_id(int alnum, const VCF_LOCUS *plocus);
+//char *Get_allele_id(int alnum, const VCF_LOCUS *plocus);
 
 /* operation:		calculates the frequency of a genotype.
  * precondition:	pwindow points to an initialized window.
  * poscondition:	returns the frequency of the genotype. */
 //float Genotype_freq(const VCF_FORMAT_GT *gt, const VCF_WINDOW *pwindow);
 
+/* operation:		calculates the frequency of an allele.
+ * precondition:	pwindow points to an initialized window.
+ * poscondition:	returns the frequency of the allele. */
 float Allele_freq(int alnum, const VCF_LOCUS *plocus);
 
 // XXX this would be a great occasion to write a variable-argument-number

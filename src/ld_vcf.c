@@ -10,13 +10,10 @@
 #include "../includes/io_utils.h"
 #include "../includes/type_utils.h"
 
-#define FILTLEN 50 // in our case we can only have PASS
-#define GTLEN 3 // max length of genotype
-#define INFOLEN 200
-
 static VCF_LOCUS buflocus;
 
 static bool enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow);
+static bool dequeue_locus(VCF_WINDOW *pwindow);
 
 /* digest_line() returns 0 on success, -1 at EOF, 1 if memory failure,
  * and 2 when the line is malformed. */
@@ -54,7 +51,7 @@ static int compare_loci(VCF_LOCUS *plocus1, VCF_LOCUS *plocus2);
  * window is taken, and if the buffer is emptied we read a new line from
  * the file.
  */
-void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
+void Initialize_window(VCF_WINDOW *pwindow, FILE *vcf_file, int winlen) {
 	char line[3];
 	int status;
 
@@ -67,13 +64,14 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 	pwindow->head = pwindow->tail = NULL;
 	pwindow->nloci = 0;
 	pwindow->winlen = winlen;
+	pwindow->vcf_file = vcf_file;
 
 	// Initialize the buffer pointers
 	buflocus.alleles = NULL;
 	buflocus.samples = NULL;
 
 	// Digest the first data line into the one-locus buffer
-	if ((status = digest_line(&buflocus, vcf_file)) != 0)
+	if ((status = digest_line(&buflocus, pwindow->vcf_file)) != 0)
 	{
 		if (status == -1)
 		{
@@ -105,7 +103,7 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 			}
 
 		// Read the next line into the buffer
-		if ((status = digest_line(&buflocus, vcf_file)) != 0)
+		if ((status = digest_line(&buflocus, pwindow->vcf_file)) != 0)
 		{
 			if (status == -1)
 				return; // here the fact that the vcf has ended is not a problem.
@@ -125,7 +123,7 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 // }}}
 
 // Slide_window {{{
-void Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
+void Slide_window(VCF_WINDOW *pwindow)
 {
 	int status;
 
@@ -146,7 +144,7 @@ void Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
 			}
 
 		// Read the next line into the buffer
-		if ((status = digest_line(&buflocus, vcf_file)) != 0)
+		if ((status = digest_line(&buflocus, pwindow->vcf_file)) != 0)
 		{
 			if (status == -1)
 				return;
@@ -174,7 +172,7 @@ void Close_window(VCF_WINDOW *pwindow)
 // }}}
 
 // Nalleles_in_locus {{{
-int Nalleles_in_locus(const VCF_LOCUS *plocus)
+unsigned int Nalleles_in_locus(const VCF_LOCUS *plocus)
 {
 	return plocus->info._an;
 }
