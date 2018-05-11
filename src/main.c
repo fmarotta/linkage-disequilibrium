@@ -3,9 +3,7 @@
 #include "ld_vcf.h"
 
 #define R2_CUTOFF 0 // value under which we shall not print anything
-#define WINLEN 100000 // length of the window, in bases.
-
-//real	1m21.531s user	0m44.354s sys	0m13.420s
+#define WINLEN 10000 // length of the window, in bases.
 
 int main(int argc, char *argv[])
 {
@@ -31,18 +29,21 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	// Ensure that at least two loci are present in the window.
 	Initialize_window(&window, vcf_file, winlen);
-	//printf("head: %d, tail: %d, nloci: %d\n", window.head->pos,
-	//window.tail->pos, window.nloci);
-	while (window.nloci > 1)
+	while (window.nloci < 2 && !window.eow)
+		Slide_window(&window);
+
+	while (window.nloci >= 2)
 	{
-		plocus1 = window.head;
-		plocus2 = plocus1->next;
+		plocus2 = plocus1 = window.head;
 
 		// the loci must be biallelic in order for our formulae to work
 		if (Nalleles_in_locus(plocus1) <= 2)
 		while (plocus2 != window.tail)
 		{
+			plocus2 = plocus2->next;
+
 			if (Nalleles_in_locus(plocus2) <= 2)
 			for (int i = 0; i < Nalleles_in_locus(plocus1); i++)
 				for (int j = 0; j < Nalleles_in_locus(plocus2); j++)
@@ -58,12 +59,12 @@ int main(int argc, char *argv[])
 								i, plocus1->pos, j, plocus2->pos, p_A, p_B, p_AB,
 								D, D_lewontin, r_squared);
 				}
-			plocus2 = plocus2->next;
 		}
 
 		Slide_window(&window);
-		//printf("head: %d, tail: %d, nloci: %d\n", window.head->pos,
-		//window.tail->pos, window.nloci);
+		// If we opened a window with less than two loci, we try again.
+		while (window.nloci < 2 && !window.eow)
+			Slide_window(&window);
 	}
 
 	Close_window(&window);
