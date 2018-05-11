@@ -13,9 +13,10 @@
 #define FILTLEN 50 // in our case we can only have PASS
 #define GTLEN 3 // max length of genotype
 #define INFOLEN 200
-#define SEQLEN 150 // max length of allele seq
 
 static VCF_LOCUS buflocus;
+
+static bool enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow);
 
 /* digest_line() returns 0 on success, -1 at EOF, 1 if memory failure,
  * and 2 when the line is malformed. */
@@ -24,8 +25,8 @@ static void vomit_line(const VCF_LOCUS *plocus);
 
 static VCF_ALLELE *make_allele(const char *seq, int alnum);
 static VCF_SAMPLE *make_sample(int m, int p, bool phased);
-static void free_alleles(VCF_ALLELE **palleles);
-static void free_samples(VCF_SAMPLE **psamples);
+static void free_alleles(VCF_LOCUS *plocus);
+static void free_samples(VCF_LOCUS *plocus);
 
 static bool locus_is_in_window(const VCF_LOCUS *plocus, const VCF_WINDOW *pwindow);
 static bool locus_is_valid(const VCF_LOCUS *plocus);
@@ -36,6 +37,9 @@ static void parse_af(char *subfield, VCF_LOCUS *plocus);
 static void parse_vt(char *subfield, VCF_LOCUS *plocus);
 static void parse_alt_seq(char *subfield, VCF_LOCUS *plocus);
 static void parse_info(char *subfield, VCF_LOCUS *plocus);
+
+static int compare_loci(VCF_LOCUS *plocus1, VCF_LOCUS *plocus2);
+
 
 // Initialize_window {{{
 
@@ -92,7 +96,7 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 		// filters for quality, number of alleles...
 		if (locus_is_valid(&buflocus))
 			// Add valid locus
-			if (!Enqueue_locus(buflocus, pwindow))
+			if (!enqueue_locus(buflocus, pwindow))
 			{
 				fputs("ERROR: could not add locus to the window.", stderr);
 				exit(EXIT_FAILURE);
@@ -103,8 +107,7 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 		{
 			if (status == -1)
 			{
-				fputs("ERROR: no data found in the vcf file.", stderr);
-				exit(EXIT_FAILURE);
+				return;
 			}
 			else
 			{
@@ -116,8 +119,161 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 }
 // }}}
 
-// Enqueue_locus {{{
-bool Enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow)
+// Slide_window {{{
+bool Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
+{
+	int status;
+	VCF_LOCUS *tmp;
+
+	if (pwindow->nloci == 0)
+	{
+		// do not remove first element, add the very next line from the
+		// file. TODO
+	}
+
+	// Remove the first locus 
+	tmp = pwindow->head;
+	pwindow->head = pwindow->head->next;
+	free_alleles(tmp);
+	free_samples(tmp);
+	free(tmp);
+	pwindow->nloci--;
+	if (pwindow->nloci == 0)
+		pwindow->tail = NULL;
+
+	// Add new locus if appropriate
+	while (locus_is_in_window(&buflocus, pwindow))
+	{
+		// filters for quality, number of alleles...
+		if (locus_is_valid(&buflocus))
+			//Add valid locus
+			if (!enqueue_locus(buflocus, pwindow))
+			{
+				fputs("ERROR: could not add locus to the window.", stderr);
+				exit(EXIT_FAILURE);
+			}
+
+		// Read the next line into the buffer
+		if ((status = digest_line(&buflocus, vcf_file)) != 0)
+		{
+			if (status == -1)
+			{
+				return false;
+			}
+			else
+			{
+				fputs("ERROR: we ran out of memory.", stderr);
+				exit(EXIT_FAILURE);
+			}
+		}
+	}
+
+	return true;
+}
+// }}}
+
+// Nalleles_in_locus {{{
+int Nalleles_in_locus(const VCF_LOCUS *plocus)
+{
+	return plocus->info._an;
+}
+// }}}
+
+// Linked_alleles_freq {{{
+float Linked_alleles_freq(int alnum1, const VCF_LOCUS *plocus1,
+						  int alnum2, const VCF_LOCUS *plocus2)
+{
+	VCF_SAMPLE *psample1, *psample2;
+	int c_AB = 0; // count
+	float p_AB; // frequency
+	int ns;
+
+	psample1 = plocus1->samples;
+	psample2 = plocus2->samples;
+	ns = (plocus1->info.ns <= plocus2->info.ns) ? plocus1->info.ns : plocus2->info.ns;
+	for (int i = 0; i < ns; i++)
+	{
+		if ((psample1->gt.m == alnum1 && psample2->gt.m == alnum2) ||
+			(psample1->gt.p == alnum1 && psample2->gt.p == alnum2))
+			c_AB++;
+		psample1 = psample1->next;
+		psample2 = psample2->next;
+	}
+
+	p_AB = (float) c_AB / (2 * ns);
+
+	return p_AB;
+}
+// }}}
+
+// Allele_freq {{{
+float Allele_freq(int alnum, const VCF_LOCUS *plocus)
+{
+	VCF_ALLELE *pallele;
+
+	pallele = plocus->alleles;
+	for (int i = 0; i < alnum; i++)
+	{
+		pallele = pallele->next;
+		if (pallele == NULL)
+			return -1;
+	}
+
+	return pallele->af;
+}
+// }}}
+
+// Calculate_D {{{
+float Calculate_D(float p_A, float p_B, float p_AB)
+{
+	return (p_AB - (p_A * p_B));
+}
+// }}}
+
+// Calculate_D_lewontin {{{
+float Calculate_D_lewontin(float p_A, float p_B, float p_AB)
+{
+	float D, Dmax;
+
+	D = p_AB - (p_A*p_B);
+	if (D < 0)
+		Dmax = (-p_A*p_B > -(1-p_A)*(1-p_B)) ? -p_A*p_B : -(1-p_A)*(1-p_B);
+	else
+		Dmax = (p_A*(1-p_B) < p_B*(1-p_A)) ? p_A*(1-p_B) : p_B*(1-p_A);
+
+	return D/Dmax;
+}
+// }}}
+
+// Calculate_r_squared {{{
+float Calculate_r_squared(float p_A, float p_B, float p_AB)
+{
+	float D, d;
+
+	D = p_AB - (p_A*p_B);
+	d = p_A*(1-p_A) * p_B*(1-p_B);
+
+	return (D*D)/d;
+}
+// }}}
+
+// compare_loci {{{
+
+/* returns 0 if it is the same locus, -1 if locus1 is upstream, +1 if
+ * locus2 is upstream. */
+static int compare_loci(VCF_LOCUS *plocus1, VCF_LOCUS *plocus2)
+{
+	if (plocus1->pos == plocus2->pos)
+		return 0;
+	else if (plocus1->pos < plocus2->pos)
+		return -1;
+	else
+		return 1;
+}
+// }}}
+
+// enqueue_locus {{{
+static bool enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow)
 {
 	VCF_LOCUS *pnew;
 
@@ -158,9 +314,10 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 	else
 		plocus->filter.pass = false;
 
-	// Free the previous allocations
-	if (plocus->alleles != NULL) free_alleles(&plocus->alleles);
-	if (plocus->samples != NULL) free_samples(&plocus->samples);
+	// Free the previous allocations XXX DO NOT DO THAT!!!! otherwise
+	// makeallele() is free to reallocate old locations, overwriting
+	// alleles of previous loci!!!
+	//free_alleles(plocus); free_samples(plocus);
 
 	// Allocate space for the alleles
 	plocus->info._an = 0;
@@ -169,22 +326,22 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 		return 1;
 	plocus->alleles = newallele;
 
+	// alt seq
 	foreach_subfield(parse_alt_seq, tmp_alt_seq, ',', plocus);
 
-	// alt info & general info
 	foreach_subfield(parse_info, tmp_info, ';', plocus);
 
 	// ref info
 	VCF_ALLELE *ref;
 	lastallele = plocus->alleles->next; // start from the first alt allele
 	ref = plocus->alleles;
-	ref->allele_info.ac = plocus->info.an;
-	ref->allele_info.af = 1;
-	strcpy(plocus->alleles->allele_info.vt, "REF");
+	ref->ac = plocus->info.an;
+	ref->af = 1;
+	strcpy(plocus->alleles->vt, "REF");
 	while (lastallele != NULL)
 	{
-		ref->allele_info.ac -= lastallele->allele_info.ac;
-		ref->allele_info.af -= lastallele->allele_info.af;
+		ref->ac -= lastallele->ac;
+		ref->af -= lastallele->af;
 		lastallele = lastallele->next;
 	}
 
@@ -200,6 +357,8 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 	lastsample = plocus->samples;
 
 	// Read the other samples
+	if (plocus->info.ns != 2504)
+		printf("%d\n",plocus->info.ns);
 	for (int i = 1; i < plocus->info.ns; i++)
 	{
 		// XXX we assume that no locus has more than 10 alleles...
@@ -212,7 +371,7 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 	}
 
 	EATLINE(vcf_file);
-	vomit_line(plocus);
+	//vomit_line(plocus);
 
 	// after getting samples...
 	if (feof(vcf_file))
@@ -237,10 +396,10 @@ static void vomit_line(const VCF_LOCUS *plocus)
 	{
 		printf("allele %d: seq %s\tcount %d\tfreq %f\ttype %s\n",
 				pallele->allele_num, pallele->allele_seq,
-				pallele->allele_info.ac, pallele->allele_info.af, pallele->allele_info.vt);
+				pallele->ac, pallele->af, pallele->vt);
 		pallele = pallele->next;
 	}
-	printf("SAMPLES\n");
+	/*printf("SAMPLES\n");
 	while (psample != NULL)
 	{
 		printf("%d%c%d\t", psample->gt.m, psample->phased ? '|' : '/', psample->gt.p);
@@ -248,6 +407,7 @@ static void vomit_line(const VCF_LOCUS *plocus)
 	}
 	putchar('\n');
 	putchar('\n');
+	*/
 }
 // }}}
 
@@ -257,14 +417,14 @@ static VCF_ALLELE *make_allele(const char *seq, int alnum)
 	VCF_ALLELE *newallele;
 
 	newallele = (VCF_ALLELE *) malloc(sizeof(VCF_ALLELE));
+	//printf("newly created allele: %p\n", newallele);
 	if (newallele != NULL)
 	{
-		newallele->allele_seq = (char *) malloc(sizeof(char) * (strlen(seq)+1));
 		strcpy(newallele->allele_seq, seq);
 		newallele->allele_num = alnum;
-		newallele->allele_info.ac = -1;
-		newallele->allele_info.af = -1;
-		strcpy(newallele->allele_info.vt, "");
+		newallele->ac = -1;
+		newallele->af = -1;
+		strcpy(newallele->vt, "");
 		newallele->next = NULL;
 	}
 	
@@ -291,34 +451,30 @@ static VCF_SAMPLE *make_sample(int m, int p, bool phased)
 // }}}
 
 // free_alleles {{{
-static void free_alleles(VCF_ALLELE **palleles)
+static void free_alleles(VCF_LOCUS *plocus)
 {
-	VCF_ALLELE *tmp, *next;
+	VCF_ALLELE *tmp;
 
-	tmp = *palleles; // tmp points to the first node
-	do {
-		next = tmp->next;
-		free(tmp);
-		tmp = next;
-	} while (tmp != NULL);
-
-	*palleles = NULL;
+	while (plocus->alleles != NULL)
+	{
+		tmp = plocus->alleles->next;
+		free(plocus->alleles);
+		plocus->alleles = tmp;
+	}
 }
 // }}}
 
 // free_samples {{{
-static void free_samples(VCF_SAMPLE **psamples)
+static void free_samples(VCF_LOCUS *plocus)
 {
-	VCF_SAMPLE *tmp, *next;
+	VCF_SAMPLE *tmp;
 
-	tmp = *psamples; // tmp points to the first node
-	do {
-		next = tmp->next;
-		free(tmp);
-		tmp = next;
-	} while (tmp != NULL);
-
-	*psamples = NULL;
+	while (plocus->samples != NULL)
+	{
+		tmp = plocus->samples->next;
+		free(plocus->samples);
+		plocus->samples = tmp;
+	}
 }
 // }}}
 
@@ -348,13 +504,15 @@ static void foreach_subfield(void (*fn)(char *subfield, VCF_LOCUS *plocus), cons
 	while ((find = strchr(field, sep)) != NULL)
 	{
 		subfield = (char *) malloc(sizeof(char) * (find - field + 1));
-		strncpy(subfield, field, find - field);
+		strncpy(subfield, field, find - field + 1);
+		subfield[find-field] = '\0';
 		(*fn)(subfield, plocus);
 		field = find + 1;
 		free(subfield);
 	}
 	subfield = (char *) malloc(sizeof(char) * (strlen(field) + 1));
 	strncpy(subfield, field, strlen(field) + 1);
+	subfield[strlen(field)] = '\0';
 	(*fn)(subfield, plocus);
 	free(subfield);
 }
@@ -365,10 +523,21 @@ static void parse_ac(char *subfield, VCF_LOCUS *plocus)
 {
 	VCF_ALLELE *tmp;
 
+	//printf("AC subdfield: %s.\n", subfield);
 	tmp = plocus->alleles->next; // start from the first alt allele
-	while (tmp->next != NULL && tmp->allele_info.ac >= 0)
+
+	//printf("expecting alt info: %d.\n", tmp->allele_info.ac);
+
+	while (tmp->ac >= 0) 
+	{
+	//printf("expecting alt info: %d.\n", tmp->allele_info.ac);
+	//printf("expecting next alt info: %d.\n",
+	//tmp->next->allele_info.ac); printf("Whiling...\n"); if
+	//(tmp->allele_info.ac < 0) break;
 		tmp = tmp->next;
-	tmp->allele_info.ac = atoi(subfield);
+	}
+	//printf("expercing tmp seq: %s.\n", tmp->allele_seq);
+	tmp->ac = atoi(subfield);
 }
 // }}}
 
@@ -377,10 +546,11 @@ static void parse_af(char *subfield, VCF_LOCUS *plocus)
 {
 	VCF_ALLELE *tmp;
 
+	//printf("AF subdfield: %s.\n", subfield);
 	tmp = plocus->alleles->next; // start from the first alt allele
-	while (tmp->next != NULL && tmp->allele_info.af >= 0)
+	while (tmp->next != NULL && tmp->af >= 0)
 		tmp = tmp->next;
-	tmp->allele_info.af = atof(subfield);
+	tmp->af = atof(subfield);
 }
 // }}}
 
@@ -390,9 +560,9 @@ static void parse_vt(char *subfield, VCF_LOCUS *plocus)
 	VCF_ALLELE *tmp;
 
 	tmp = plocus->alleles->next; // start from the first alt allele
-	while (tmp->next != NULL && tmp->allele_info.vt[0] != '\0') // stop at the first non-initialized member
+	while (tmp->next != NULL && tmp->vt[0] != '\0') // stop at the first non-initialized member
 		tmp = tmp->next;
-	strcpy(tmp->allele_info.vt, subfield);
+	strcpy(tmp->vt, subfield);
 }
 // }}}
 
@@ -407,9 +577,15 @@ static void parse_alt_seq(char *subfield, VCF_LOCUS *plocus)
 		exit(EXIT_FAILURE);
 
 	tmp = plocus->alleles;
+	//printf("first allele of locus %d: %p\n",plocus->pos, tmp);
 	while (tmp->next != NULL)
+	{
+		//printf("seq: %s.\n", tmp->allele_seq);
 		tmp = tmp->next;
+	}
+	//printf("last allele of locus %d: %p\n", plocus->pos, tmp);
 	tmp->next = newallele;
+	//printf("new last allele %p\n", tmp->next);
 }
 // }}}
 
@@ -417,6 +593,8 @@ static void parse_alt_seq(char *subfield, VCF_LOCUS *plocus)
 static void parse_info(char *subfield, VCF_LOCUS *plocus)
 {
 	char *datum;
+
+	//printf("subfield %s.\n", subfield);
 
 	if (strncmp(subfield, "NS=", 3) == 0)
 	{
