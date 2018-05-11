@@ -74,6 +74,7 @@ typedef struct vcf_window {
 	int nloci; // number of loci currently in the queue
 	int winlen; // length of the sliding window
 	FILE *vcf_file; // file associated to the window
+	bool eow; // End Of Window
 } VCF_WINDOW;
 
 
@@ -87,26 +88,13 @@ void Initialize_window(VCF_WINDOW *pwindow, FILE *vcf_file, int winlen);
 /* operation:		moves the window forward one locus.
  * precondition:	pwindow is initialized.
  * postcondition:	removes the first locus from the queue; if appropriate
- * 					adds more locus from the file to the queue. returns true
- * 					until the window is full. */
+ * 					adds more locus from the file to the queue. */
 void Slide_window(VCF_WINDOW *pwindow);
 
 /* operation:		removes all the loci from the window.
  * precondition:	pwindow is initialized.
  * postcondition:	all memory is freed. */
 void Close_window(VCF_WINDOW *pwindow);
-
-/* operation:		adds one locus to the window; do not bother using it,
- * 					please: use Initialize_window() and Slide_window().
- * precondition:	a locus must have been read and digested.
- * poscondition:	a new locus is added to the window. */
-//bool Enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow);
-
-/* operation:		removes one locus from window; do not bother using it,
- * 					please: use Initialize_window() and Slide_window().
- * precondition:	
- * poscondition:	the memory occupied by the deleted locus is freed */
-//bool Dequeue_locus(VCF_LOCUS *plocus, VCF_WINDOW *pwindow);
 
 /* operation:		gets number of loci currently in the window.
  * precondition:	pwindow points to an initialized window.

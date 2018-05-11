@@ -5,13 +5,7 @@
 #define R2_CUTOFF 0 // value under which we shall not print anything
 #define WINLEN 100000 // length of the window, in bases.
 
-/* I am quite pleased with the result, though I still do not understand
- * why for some alleles pair I get D' or r^3 greater than 1, and by a
- * lot... However, it seems that of the four paris, two always get valid
- * D' and r^2, namely alleles 0-1 and 1-1. All the same, its two in the
- * morning and I haven't been doing anything other than this all day, so
- * instead of thinking about it, I am going to bed.
- */
+//real	1m21.531s user	0m44.354s sys	0m13.420s
 
 int main(int argc, char *argv[])
 {
@@ -40,7 +34,7 @@ int main(int argc, char *argv[])
 	Initialize_window(&window, vcf_file, winlen);
 	//printf("head: %d, tail: %d, nloci: %d\n", window.head->pos,
 	//window.tail->pos, window.nloci);
-	while (window.nloci > 0)
+	while (window.nloci > 1)
 	{
 		plocus1 = window.head;
 		plocus2 = plocus1->next;
@@ -74,7 +68,6 @@ int main(int argc, char *argv[])
 
 	Close_window(&window);
 	fclose(vcf_file);
-	puts("Done");
 
 	return 0;
 }

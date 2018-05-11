@@ -65,6 +65,7 @@ void Initialize_window(VCF_WINDOW *pwindow, FILE *vcf_file, int winlen) {
 	pwindow->nloci = 0;
 	pwindow->winlen = winlen;
 	pwindow->vcf_file = vcf_file;
+	pwindow->eow = false;
 
 	// Initialize the buffer pointers
 	buflocus.alleles = NULL;
@@ -91,7 +92,7 @@ void Initialize_window(VCF_WINDOW *pwindow, FILE *vcf_file, int winlen) {
 	}
 
 	// Add loci to the window.
-	while (locus_is_in_window(&buflocus, pwindow))
+	while (locus_is_in_window(&buflocus, pwindow) && !pwindow->eow)
 	{
 		// filters for quality, number of alleles...
 		if (locus_is_valid(&buflocus))
@@ -106,7 +107,10 @@ void Initialize_window(VCF_WINDOW *pwindow, FILE *vcf_file, int winlen) {
 		if ((status = digest_line(&buflocus, pwindow->vcf_file)) != 0)
 		{
 			if (status == -1)
+			{
+				pwindow->eow = true;
 				return; // here the fact that the vcf has ended is not a problem.
+			}
 			else if (status == 1)
 			{
 				fputs("ERROR: we ran out of memory.", stderr);
@@ -132,7 +136,7 @@ void Slide_window(VCF_WINDOW *pwindow)
 		dequeue_locus(pwindow);
 
 	// Add new locus if appropriate
-	while (locus_is_in_window(&buflocus, pwindow))
+	while (locus_is_in_window(&buflocus, pwindow) && !pwindow->eow)
 	{
 		// filters for quality, number of alleles...
 		if (locus_is_valid(&buflocus))
@@ -147,7 +151,10 @@ void Slide_window(VCF_WINDOW *pwindow)
 		if ((status = digest_line(&buflocus, pwindow->vcf_file)) != 0)
 		{
 			if (status == -1)
+			{
+				pwindow->eow = true;
 				return;
+			}
 			else if (status == 1)
 			{
 				fputs("ERROR: we ran out of memory.", stderr);
@@ -236,10 +243,18 @@ float Calculate_D_lewontin(float p_A, float p_B, float p_AB)
 	float D, Dmax;
 
 	D = p_AB - (p_A*p_B);
+/*
 	if (D < 0)
 		Dmax = (-p_A*p_B > -(1-p_A)*(1-p_B)) ? -p_A*p_B : -(1-p_A)*(1-p_B);
 	else
 		Dmax = (p_A*(1-p_B) < p_B*(1-p_A)) ? p_A*(1-p_B) : p_B*(1-p_A);
+		*/
+
+
+	if (D < 0)
+		Dmax = (p_A*p_B <= (1-p_A)*(1-p_B)) ? p_A*p_B : (1-p_A)*(1-p_B);
+	else
+		Dmax = (p_A*(1-p_B) <= (1-p_A)*p_B) ? p_A*(1-p_B) : (1-p_A)*p_B;
 
 	return D/Dmax;
 }
@@ -280,14 +295,16 @@ static bool enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow)
 	pnew = (VCF_LOCUS *) malloc(sizeof(VCF_LOCUS));
 	if (pnew == NULL)
 		return false;
-	*pnew = locus;
 
+	*pnew = locus;
 	if (pwindow->head == NULL)
 		pwindow->head = pnew;
 	else
 		pwindow->tail->next = pnew;
 	pwindow->tail = pnew;
-	pwindow->nloci++;
+
+	if (pnew != NULL)
+		pwindow->nloci++;
 
 	return true;
 }
@@ -307,9 +324,9 @@ static bool dequeue_locus(VCF_WINDOW *pwindow)
 	free_alleles(plocus);
 	free_samples(plocus);
 	free(plocus);
-	pwindow->nloci--;
 	if (pwindow->nloci == 0)
 		pwindow->tail = NULL;
+	pwindow->nloci--;
 
 	return true;
 }
@@ -326,9 +343,13 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 	char tmp_gt[GTLEN];
 
 	// XXX what about chr X and Y? are they integer?
-	fscanf(vcf_file, "%d%ld%s%s%s%d%s%s", &plocus->chrom, &plocus->pos,
+	if (fscanf(vcf_file, "%d%ld%s%s%s%d%s%s", &plocus->chrom, &plocus->pos,
 			&plocus->id, tmp_ref_seq, tmp_alt_seq,
-			&plocus->qual, tmp_filter, tmp_info);
+			&plocus->qual, tmp_filter, tmp_info) != 8)
+	{
+		// The file has ended
+		return -1;
+	}
 
 	// Filter
 	if (strcmp(tmp_filter, "PASS") == 0)
@@ -351,9 +372,10 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 	// alt seq
 	foreach_subfield(parse_alt_seq, tmp_alt_seq, ',', plocus);
 
+	// general and alt allele info
 	foreach_subfield(parse_info, tmp_info, ';', plocus);
 
-	// ref info
+	// ref allele info
 	VCF_ALLELE *ref;
 	lastallele = plocus->alleles->next; // start from the first alt allele
 	ref = plocus->alleles;
@@ -395,10 +417,6 @@ static int digest_line(VCF_LOCUS *plocus, FILE *vcf_file)
 	EATLINE(vcf_file);
 	//vomit_line(plocus);
 
-	// after getting samples...
-	if (feof(vcf_file))
-		return -1;
-	
 	return 0;
 }
 // }}}
@@ -513,8 +531,7 @@ static bool locus_is_in_window(const VCF_LOCUS *plocus, const VCF_WINDOW *pwindo
 // locus_is_valid {{{
 static bool locus_is_valid(const VCF_LOCUS *plocus)
 {
-	// No conditions.
-	return true;
+	return (plocus->pos >= 0);
 }
 // }}}
 
