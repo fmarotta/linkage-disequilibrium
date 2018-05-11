@@ -211,8 +211,9 @@ float Linked_alleles_freq(int alnum1, const VCF_LOCUS *plocus1,
 	ns = (plocus1->info.ns <= plocus2->info.ns) ? plocus1->info.ns : plocus2->info.ns;
 	for (int i = 0; i < ns; i++)
 	{
-		if ((psample1->gt.m == alnum1 && psample2->gt.m == alnum2) ||
-			(psample1->gt.p == alnum1 && psample2->gt.p == alnum2))
+		if (psample1->gt.m == alnum1 && psample2->gt.m == alnum2)
+			c_AB++;
+		if (psample1->gt.p == alnum1 && psample2->gt.p == alnum2)
 			c_AB++;
 		psample1 = psample1->next;
 		psample2 = psample2->next;
