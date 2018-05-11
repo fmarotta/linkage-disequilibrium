@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "ld_vcf.h"
-#include "io_utils.h"
 
 /* I am quite pleased with the result, though I still do not understand
  * why for some alleles pair I get D' or r^3 greater than 1, and by a
@@ -19,7 +18,8 @@ int main(void)
 	float p_AB, p_A, p_B;
 	float D, D_lewontin, r_squared;
 
-	if ((vcf_file = fopen("data/ALL.chr11.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf", "r")) == NULL)
+	// TODO soft-code the filename, of course
+	if ((vcf_file = fopen("../data/ALL.chr11.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf", "r")) == NULL)
 	{
 		fputs("error reading vcf file", stderr);
 		exit(EXIT_FAILURE);

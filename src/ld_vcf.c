@@ -7,8 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "ld_vcf.h"
-#include "io_utils.h"
-#include "type_utils.h"
+#include "../includes/io_utils.h"
+#include "../includes/type_utils.h"
 
 #define FILTLEN 50 // in our case we can only have PASS
 #define GTLEN 3 // max length of genotype
