@@ -58,6 +58,11 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 	char line[3];
 	int status;
 
+	// Discard header lines from the file
+	while (fgets(line, 3, vcf_file) != NULL && strcmp(line, "##") == 0)
+		EATLINE(vcf_file);
+	EATLINE(vcf_file);
+
 	// Initialize the window
 	pwindow->head = pwindow->tail = NULL;
 	pwindow->nloci = 0;
@@ -67,14 +72,6 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 	buflocus.alleles = NULL;
 	buflocus.samples = NULL;
 
-	// Discard header lines
-	//
-	// There is no need to read the whole line, the first two characters
-	// are enough. Detect the change from ## to #.
-	while (fgets(line, 3, vcf_file) != NULL && strcmp(line, "##") == 0)
-		EATLINE(vcf_file);
-	EATLINE(vcf_file);
-
 	// Digest the first data line into the one-locus buffer
 	if ((status = digest_line(&buflocus, vcf_file)) != 0)
 	{
@@ -83,9 +80,14 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 			fputs("ERROR: no data found in the vcf file.", stderr);
 			exit(EXIT_FAILURE);
 		}
-		else
+		else if (status == 1)
 		{
 			fputs("ERROR: we ran out of memory.", stderr);
+			exit(EXIT_FAILURE);
+		}
+		else
+		{
+			fputs("ERROR: malformed VCF.", stderr);
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -106,12 +108,15 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 		if ((status = digest_line(&buflocus, vcf_file)) != 0)
 		{
 			if (status == -1)
+				return; // here the fact that the vcf has ended is not a problem.
+			else if (status == 1)
 			{
-				return;
+				fputs("ERROR: we ran out of memory.", stderr);
+				exit(EXIT_FAILURE);
 			}
 			else
 			{
-				fputs("ERROR: we ran out of memory.", stderr);
+				fputs("ERROR: malformed VCF.", stderr);
 				exit(EXIT_FAILURE);
 			}
 		}
@@ -120,26 +125,13 @@ void Initialize_window(FILE *vcf_file, VCF_WINDOW *pwindow, int winlen) {
 // }}}
 
 // Slide_window {{{
-bool Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
+void Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
 {
 	int status;
-	VCF_LOCUS *tmp;
 
-	if (pwindow->nloci == 0)
-	{
-		// do not remove first element, add the very next line from the
-		// file. TODO
-	}
-
-	// Remove the first locus 
-	tmp = pwindow->head;
-	pwindow->head = pwindow->head->next;
-	free_alleles(tmp);
-	free_samples(tmp);
-	free(tmp);
-	pwindow->nloci--;
-	if (pwindow->nloci == 0)
-		pwindow->tail = NULL;
+	// Remove the first locus
+	if (pwindow->nloci != 0)
+		dequeue_locus(pwindow);
 
 	// Add new locus if appropriate
 	while (locus_is_in_window(&buflocus, pwindow))
@@ -157,36 +149,27 @@ bool Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
 		if ((status = digest_line(&buflocus, vcf_file)) != 0)
 		{
 			if (status == -1)
-			{
-				return false;
-			}
-			else
+				return;
+			else if (status == 1)
 			{
 				fputs("ERROR: we ran out of memory.", stderr);
 				exit(EXIT_FAILURE);
 			}
+			else
+			{
+				fputs("ERROR: malformed VCF line.", stderr);
+				exit(EXIT_FAILURE);
+			}
 		}
 	}
-
-	return true;
 }
 // }}}
 
 // Close_window {{{
 void Close_window(VCF_WINDOW *pwindow)
 {
-	VCF_LOCUS *tmp;
-
 	while (pwindow->nloci > 0)
-	{
-		tmp = pwindow->head;
-		pwindow->head = pwindow->head->next;
-		free_alleles(tmp);
-		free_samples(tmp);
-		free(tmp);
-		pwindow->nloci--;
-	}
-	pwindow->tail = NULL;
+		dequeue_locus(pwindow);
 }
 // }}}
 
@@ -307,6 +290,28 @@ static bool enqueue_locus(VCF_LOCUS locus, VCF_WINDOW *pwindow)
 		pwindow->tail->next = pnew;
 	pwindow->tail = pnew;
 	pwindow->nloci++;
+
+	return true;
+}
+// }}}
+
+// dequeue_locus {{{
+static bool dequeue_locus(VCF_WINDOW *pwindow)
+{
+	VCF_LOCUS *plocus;
+
+	if (pwindow->nloci == 0)
+		return false;
+
+	// Remove the first locus 
+	plocus = pwindow->head;
+	pwindow->head = pwindow->head->next;
+	free_alleles(plocus);
+	free_samples(plocus);
+	free(plocus);
+	pwindow->nloci--;
+	if (pwindow->nloci == 0)
+		pwindow->tail = NULL;
 
 	return true;
 }
