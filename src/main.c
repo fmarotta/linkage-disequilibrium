@@ -10,7 +10,7 @@
  * instead of thinking about it, I am going to bed.
  */
 
-int main(void)
+int main(int argc, char *argv[])
 {
 	FILE *vcf_file;
 	VCF_WINDOW window;
@@ -18,10 +18,14 @@ int main(void)
 	float p_AB, p_A, p_B;
 	float D, D_lewontin, r_squared;
 
-	// TODO soft-code the filename, of course
-	if ((vcf_file = fopen("../data/ALL.chr11.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf", "r")) == NULL)
+	if (argc != 2)
 	{
-		fputs("error reading vcf file", stderr);
+		fprintf(stderr, "USAGE: %s <vcf_file>", argv[0]);
+		exit(EXIT_FAILURE);
+	}
+	if ((vcf_file = fopen(argv[1], "r")) == NULL)
+	{
+		fprintf(stderr, "ERROR: could not read VCF: %s", argv[1]);
 		exit(EXIT_FAILURE);
 	}
 
