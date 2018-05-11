@@ -33,13 +33,13 @@ int main(void)
 		plocus1 = window.head;
 		plocus2 = plocus1->next;
 
-		// the loci must be biallelic for our formulae to work
+		// the loci must be biallelic in order for our formulae to work
 		if (Nalleles_in_locus(plocus1) <= 2)
 		while (plocus2 != window.tail)
 		{
 			if (Nalleles_in_locus(plocus2) <= 2)
-			for (int i = 0; i < 2; i++)
-				for (int j = 0; j < 2; j++)
+			for (int i = 0; i < Nalleles_in_locus(plocus1); i++)
+				for (int j = 0; j < Nalleles_in_locus(plocus2); j++)
 				{
 					p_AB = Linked_alleles_freq(i, plocus1, j, plocus2);
 					p_A = Allele_freq(i, plocus1);
@@ -60,7 +60,9 @@ int main(void)
 		//window.tail->pos, window.nloci);
 	}
 
+	Close_window(&window);
 	fclose(vcf_file);
 	puts("Done");
+
 	return 0;
 }

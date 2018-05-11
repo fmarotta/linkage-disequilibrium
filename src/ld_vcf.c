@@ -172,6 +172,24 @@ bool Slide_window(FILE *vcf_file, VCF_WINDOW *pwindow)
 }
 // }}}
 
+// Close_window {{{
+void Close_window(VCF_WINDOW *pwindow)
+{
+	VCF_LOCUS *tmp;
+
+	while (pwindow->nloci > 0)
+	{
+		tmp = pwindow->head;
+		pwindow->head = pwindow->head->next;
+		free_alleles(tmp);
+		free_samples(tmp);
+		free(tmp);
+		pwindow->nloci--;
+	}
+	pwindow->tail = NULL;
+}
+// }}}
+
 // Nalleles_in_locus {{{
 int Nalleles_in_locus(const VCF_LOCUS *plocus)
 {
